@@ -560,26 +560,11 @@ def _generate_report_impl(
         if append_debug:
             report = report + "\n" + build_debug_footer(result.debug)
 
-        qc_lines: List[str] = []
         merged_warnings: List[str] = []
         if sanitizer_warnings:
             merged_warnings.extend(sanitizer_warnings)
         if result.qc_issues:
             merged_warnings.extend(list(result.qc_issues))
-        merged_warnings = list(dict.fromkeys(merged_warnings))
-
-        if merged_warnings:
-            qc_lines.append("QC / Avisos:")
-            qc_lines.extend([f"- {x}" for x in merged_warnings])
-
-        qc_lines.append("")
-        qc_lines.append("Modelo:")
-        qc_lines.append(json.dumps(MODEL_MANAGER.describe(), indent=2))
-        qc_lines.append("")
-        qc_lines.append("Debug do pipeline:")
-        qc_lines.append(json.dumps(result.debug, indent=2))
-
-        qc_text = "\n".join(qc_lines).strip()
 
         # Save outputs
         txt_path = None
@@ -603,6 +588,22 @@ def _generate_report_impl(
             jf.flush()
             jf.close()
             json_path = jf.name
+
+        merged_warnings = list(dict.fromkeys(merged_warnings))
+
+        qc_lines: List[str] = []
+        if merged_warnings:
+            qc_lines.append("QC / Avisos:")
+            qc_lines.extend([f"- {x}" for x in merged_warnings])
+
+        qc_lines.append("")
+        qc_lines.append("Modelo:")
+        qc_lines.append(json.dumps(MODEL_MANAGER.describe(), indent=2))
+        qc_lines.append("")
+        qc_lines.append("Debug do pipeline:")
+        qc_lines.append(json.dumps(result.debug, indent=2))
+
+        qc_text = "\n".join(qc_lines).strip()
 
         return report, qc_text, txt_path, json_path
 

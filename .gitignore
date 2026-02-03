@@ -1,13 +1,32 @@
 .DS_Store
+Thumbs.db
+
+# Variáveis de ambiente (podem conter segredo)
 .env
+.env.local
+.env.*
+
+# Modelos / artefatos grandes (quando houver)
+models/
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
 
-# Virtualenv
+# Build / distribuição
+dist/
+build/
+*.egg-info/
+
+# Virtualenv / pyenv
 .venv/
 venv/
 .python-version
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
