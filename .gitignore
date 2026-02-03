@@ -1,30 +1,13 @@
-# Environment variables (contains secrets)
+.DS_Store
 .env
-
-# Downloaded models (large files)
-models/
-.env.local
-.env.*
 
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-*.egg-info/
-dist/
-build/
+*.pyc
+*.pyo
+*.pyd
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
+# Virtualenv
+.venv/
+venv/
+.python-version
