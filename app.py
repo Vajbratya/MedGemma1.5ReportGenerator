@@ -176,37 +176,37 @@ def _format_study_info_text(
     vram_summary = format_vram_summary(gpu=gpu, est_total_gb=est_total_gb)
 
     lines = [
-        "Study information (PHI-safe display)",
-        f"Modality: {modality}",
-        f"Study description: {study_info.get('StudyDescription', 'Unknown')}",
-        f"Study date: {study_info.get('StudyDate', 'Unknown')}",
-        f"Patient ID: {patient_id_masked}",
-        f"Body part: {study_info.get('BodyPartExamined', '')}",
+        "Informações do estudo (exibição segura / PHI-safe)",
+        f"Modalidade: {modality}",
+        f"Descrição do estudo: {study_info.get('StudyDescription', 'Desconhecido')}",
+        f"Data do estudo: {study_info.get('StudyDate', 'Desconhecida')}",
+        f"ID do paciente: {patient_id_masked}",
+        f"Região: {study_info.get('BodyPartExamined', '')}",
         "",
-        f"Series count: {study_info.get('SeriesCount', 'N/A')} | Selected: {study_info.get('SelectedSeriesCount', 'N/A')}",
-        f"Total original slices: {study_info.get('TotalOriginalSlices', 'N/A')} | Selected slices: {study_info.get('TotalSelectedSlices', 'N/A')}",
-        f"Sampling: {study_info.get('SamplingStrategy', 'even')} | Exclude localizers: {study_info.get('ExcludeLocalizers', True)}",
+        f"Qtde. de séries: {study_info.get('SeriesCount', 'N/A')} | Selecionadas: {study_info.get('SelectedSeriesCount', 'N/A')}",
+        f"Total de slices (originais): {study_info.get('TotalOriginalSlices', 'N/A')} | Selecionadas: {study_info.get('TotalSelectedSlices', 'N/A')}",
+        f"Amostragem: {study_info.get('SamplingStrategy', 'even')} | Excluir localizers: {study_info.get('ExcludeLocalizers', True)}",
     ]
     if "MaxSlicesPerSeries" in study_info:
-        lines.append(f"Max slices per series: {study_info.get('MaxSlicesPerSeries')}")
-    lines.append(f"Processed images: {study_info.get('ProcessedImages', 0)}")
-    lines.append(f"Image size: {study_info.get('ImageSize', 'N/A')}x{study_info.get('ImageSize', 'N/A')}")
-    lines.append(f"Default window (from DICOM): WC={wc}, WW={ww}")
+        lines.append(f"Máx. de slices por série: {study_info.get('MaxSlicesPerSeries')}")
+    lines.append(f"Imagens processadas: {study_info.get('ProcessedImages', 0)}")
+    lines.append(f"Tamanho das imagens: {study_info.get('ImageSize', 'N/A')}x{study_info.get('ImageSize', 'N/A')}")
+    lines.append(f"Janela padrão (do DICOM): WC={wc}, WW={ww}")
     if series_summary:
         lines.append("")
-        lines.append("Series summary (top):")
+        lines.append("Resumo das séries (top):")
         lines.append(series_summary)
 
     lines.extend(
         [
             "",
-            "Model",
+            "Modelo",
             f"Model ID: {model_desc.get('model_id', MODEL_ID)}",
-            f"Quantization: {quantization}",
+            f"Quantização: {quantization}",
             f"DType: {dtype}",
             f"Device: {model_desc.get('param_device', 'desconhecido')}",
             "",
-            "VRAM / Memory",
+            "VRAM / Memória",
             vram_summary,
         ]
     )
@@ -373,10 +373,10 @@ def auto_fit_to_vram(
     """
     gpu = get_gpu_info()
     if not gpu.available:
-        return gr.update(), gr.update(), "Auto-fit: no GPU detected."
+        return gr.update(), gr.update(), "Auto-fit: nenhuma GPU detectada."
 
     if CACHE.study_info is None:
-        return gr.update(), gr.update(), "Auto-fit: process a study first."
+        return gr.update(), gr.update(), "Auto-fit: processe um estudo primeiro."
 
     series_count = len(selected_series_uids or []) or int(CACHE.study_info.get("SelectedSeriesCount") or 0) or 1
 
@@ -398,7 +398,7 @@ def auto_fit_to_vram(
         return (
             gr.update(),
             gr.update(),
-            f"Auto-fit: no feasible settings for {target_vram:.1f} GB. Try lowering the target.",
+            f"Auto-fit: não encontrei uma combinação que caiba em {target_vram:.1f} GB. Tente baixar o alvo.",
         )
 
     msg = (
@@ -606,11 +606,11 @@ else:
 
 
 def create_interface():
-    with gr.Blocks(title="MedGemma 1.5 DICOM Report Generator — Enhanced", theme=gr.themes.Soft()) as demo:
-        gr.Markdown("# MedGemma 1.5 DICOM Report Generator — Enhanced")
+    with gr.Blocks(title="Gerador de Laudo DICOM (MedGemma 1.5) — Enhanced", theme=gr.themes.Soft()) as demo:
+        gr.Markdown("# Gerador de Laudo DICOM (MedGemma 1.5) — Enhanced")
         gr.Markdown(
-            "Upload a ZIP file containing DICOM images to draft a structured radiology report. "
-            "**Research/education only — not for clinical use.**"
+            "Envie um arquivo ZIP com imagens DICOM para gerar um rascunho de laudo estruturado. "
+            "**Somente para pesquisa/educação — não use para decisão clínica.**"
         )
 
         with gr.Row():
@@ -619,27 +619,27 @@ def create_interface():
             # -----------------------------------------------------------------
             with gr.Column(scale=1):
                 file_input = gr.File(
-                    label="Upload DICOM ZIP",
+                    label="Enviar ZIP DICOM",
                     file_types=[".zip"],
                     type="filepath",
                 )
 
-                with gr.Accordion("Image processing", open=True):
+                with gr.Accordion("Processamento de imagens", open=True):
                     sampling_strategy = gr.Dropdown(
-                        label="Sampling strategy",
+                        label="Estratégia de amostragem",
                         choices=["even", "smart"],
                         value="even",
-                        info="smart = best-of-3 per bin (more representative without decoding everything)",
+                        info="smart = melhor de 3 por faixa (tende a representar melhor sem decodificar tudo)",
                     )
                     exclude_localizers = gr.Checkbox(
-                        label="Exclude localizers / scouts (recommended)",
+                        label="Excluir localizers / scouts (recomendado)",
                         value=True,
                     )
                     series_selector = gr.CheckboxGroup(
-                        label="Series selection",
+                        label="Seleção de séries",
                         choices=[],
                         value=[],
-                        info="Click 'Process & Preview' to populate. Default selects non-localizers with >=3 slices.",
+                        info="Clique em 'Processar & pré-visualizar' para listar. Por padrão, seleciona séries não-localizer com >=3 slices.",
                     )
 
                     max_slices_slider = gr.Slider(
@@ -647,21 +647,21 @@ def create_interface():
                         maximum=50,
                         value=10,
                         step=1,
-                        label="Max slices per series",
-                        info="0 = global sampling (not recommended for many series). Reduce to save VRAM.",
+                        label="Máx. de slices por série",
+                        info="0 = amostragem global (não recomendado com muitas séries). Reduza para economizar VRAM.",
                     )
                     image_size_slider = gr.Slider(
                         minimum=224,
                         maximum=1024,
                         value=512,
                         step=32,
-                        label="Image size",
-                        info="Smaller = less VRAM, lower visual detail",
+                        label="Tamanho da imagem",
+                        info="Menor = menos VRAM, menos detalhe visual",
                     )
 
-                    gr.Markdown("**Windowing (CT / X-ray)**")
+                    gr.Markdown("**Windowing (TC / raio-X)**")
                     use_auto_window = gr.Checkbox(
-                        label="Use auto window (from DICOM metadata)",
+                        label="Usar janela automática (metadados DICOM)",
                         value=True,
                     )
                     with gr.Row():
@@ -681,31 +681,31 @@ def create_interface():
                         )
 
                     with gr.Row():
-                        process_btn = gr.Button("Process & Preview", variant="primary")
-                        auto_fit_btn = gr.Button("Auto-fit to VRAM", variant="secondary")
+                        process_btn = gr.Button("Processar & pré-visualizar", variant="primary")
+                        auto_fit_btn = gr.Button("Auto-fit para VRAM", variant="secondary")
 
                     auto_fit_fraction = gr.Slider(
                         minimum=0.5,
                         maximum=0.95,
                         value=0.85,
                         step=0.05,
-                        label="Auto-fit target (% of total VRAM)",
-                        info="Auto-fit uses total VRAM (not free). Tune down if other apps are using VRAM.",
+                        label="Alvo do auto-fit (% da VRAM total)",
+                        info="O auto-fit usa VRAM total (não a livre). Reduza se tiver outros apps consumindo VRAM.",
                     )
 
                 status_output = gr.Textbox(label="Status", interactive=False)
                 study_info_box = gr.Textbox(
-                    label="Study info & memory estimate",
+                    label="Informações do estudo & estimativa de memória",
                     interactive=False,
                     lines=18,
                 )
 
-                with gr.Accordion("Advanced: model (optional reload)", open=False):
+                with gr.Accordion("Avançado: modelo (recarregar se precisar)", open=False):
                     quantization = gr.Dropdown(
-                        label="Quantization",
+                        label="Quantização",
                         choices=["auto", "none", "8bit", "4bit"],
                         value=os.getenv("MODEL_QUANTIZATION", "auto"),
-                        info="Requires bitsandbytes for 4bit/8bit. If not installed, falls back to none.",
+                        info="Precisa de bitsandbytes para 4bit/8bit. Se não estiver instalado, volta para none.",
                     )
                     dtype = gr.Dropdown(
                         label="DType",
@@ -713,22 +713,22 @@ def create_interface():
                         value=os.getenv("MODEL_DTYPE", "auto"),
                     )
                     attn_impl = gr.Dropdown(
-                        label="Attention implementation",
+                        label="Implementação de attention",
                         choices=["auto", "sdpa", "flash_attention_2", "eager"],
                         value="auto",
-                        info="Leave auto unless you know you need eager/flash.",
+                        info="Deixe em auto a menos que você saiba que precisa de eager/flash.",
                     )
-                    reload_btn = gr.Button("Reload model", variant="secondary")
-                    model_status = gr.Textbox(label="Model status (debug)", interactive=False, lines=8, value=json.dumps(MODEL_MANAGER.describe(), indent=2))
+                    reload_btn = gr.Button("Recarregar modelo", variant="secondary")
+                    model_status = gr.Textbox(label="Status do modelo (debug)", interactive=False, lines=8, value=json.dumps(MODEL_MANAGER.describe(), indent=2))
 
             # -----------------------------------------------------------------
             # Coluna do meio: galeria de preview
             # -----------------------------------------------------------------
             with gr.Column(scale=1):
-                gr.Markdown("### Image preview")
-                gr.Markdown("*Sampled images that will be sent to the model*")
+                gr.Markdown("### Pré-visualização")
+                gr.Markdown("*Imagens amostradas que serão enviadas ao modelo*")
                 image_gallery = gr.Gallery(
-                    label="Sampled images",
+                    label="Imagens amostradas",
                     show_label=False,
                     columns=4,
                     rows=3,
@@ -742,63 +742,63 @@ def create_interface():
             # -----------------------------------------------------------------
             with gr.Column(scale=1):
                 language = gr.Dropdown(
-                    label="Report language",
+                    label="Idioma do laudo",
                     choices=["English", "Português (Brasil)", "Español"],
-                    value="English",
+                    value="Português (Brasil)",
                 )
                 template = gr.Dropdown(
-                    label="Report template",
+                    label="Template do laudo",
                     choices=["General", "Chest X-ray", "CT (general)", "MRI (general)"],
                     value="General",
                 )
                 clinical_history = gr.Textbox(
-                    label="Clinical history / indication (optional)",
+                    label="História clínica / indicação (opcional)",
                     lines=2,
-                    placeholder="e.g., Fever, cough, rule out pneumonia...",
+                    placeholder="Ex.: febre e tosse; afastar pneumonia...",
                 )
                 additional_instructions = gr.Textbox(
-                    label="Additional instructions (optional)",
+                    label="Instruções adicionais (opcional)",
                     lines=2,
-                    placeholder="e.g., be concise; focus on lungs; use numbered impression...",
+                    placeholder="Ex.: seja objetivo; foque em pulmões; impressão numerada...",
                 )
                 prompt_override = gr.Textbox(
-                    label="Prompt override (advanced; optional)",
+                    label="Prompt personalizado (avançado; opcional)",
                     lines=3,
-                    placeholder="Leave empty to use the built-in structured prompt builder.",
+                    placeholder="Deixe em branco para usar o gerador de prompt estruturado.",
                 )
 
                 pipeline_mode = gr.Radio(
-                    label="Pipeline mode",
+                    label="Modo do pipeline",
                     choices=[
                         "single",
-                        "single + refine (recommended if report quality varies)",
-                        "chunked (map-reduce, recommended for large studies)",
-                        "chunked + refine (best quality for large studies)",
+                        "single + refine (recomendado se a qualidade variar)",
+                        "chunked (map-reduce, recomendado para estudos grandes)",
+                        "chunked + refine (melhor qualidade em estudos grandes)",
                     ],
-                    value="chunked (map-reduce, recommended for large studies)",
+                    value="chunked (map-reduce, recomendado para estudos grandes)",
                 )
                 chunk_size = gr.Slider(
                     minimum=4,
                     maximum=32,
                     value=16,
                     step=1,
-                    label="Chunk size (images per inference) — chunked modes only",
+                    label="Tamanho do chunk (imagens por inferência) — só no modo chunked",
                 )
 
-                with gr.Accordion("Model generation settings", open=False):
+                with gr.Accordion("Configurações de geração", open=False):
                     max_tokens_slider = gr.Slider(
                         minimum=50,
                         maximum=1200,
                         value=350,
                         step=10,
-                        label="Max new tokens",
+                        label="Máx. de novos tokens",
                     )
                     temperature_slider = gr.Slider(
                         minimum=0.0,
                         maximum=2.0,
                         value=0.7,
                         step=0.1,
-                        label="Temperature",
+                        label="Temperatura",
                     )
                     top_p_slider = gr.Slider(
                         minimum=0.0,
@@ -815,23 +815,23 @@ def create_interface():
                         label="Top-k",
                     )
                     do_sample_checkbox = gr.Checkbox(
-                        label="Enable sampling",
+                        label="Ativar sampling",
                         value=True,
-                        info="Uncheck for deterministic output.",
+                        info="Desmarque para saída determinística.",
                     )
 
                 append_debug = gr.Checkbox(
-                    label="Append debug footer to report (non-clinical)",
+                    label="Adicionar rodapé de debug no laudo (não-clínico)",
                     value=False,
                 )
 
-                generate_btn = gr.Button("Generate report", variant="primary", size="lg")
+                generate_btn = gr.Button("Gerar laudo", variant="primary", size="lg")
 
                 report_output = gr.Textbox(
-                    label="Generated report",
+                    label="Laudo gerado",
                     interactive=False,
                     lines=18,
-                    placeholder="Report will appear here...",
+                    placeholder="O laudo vai aparecer aqui...",
                 )
                 qc_output = gr.Textbox(
                     label="QC / Debug",
@@ -840,21 +840,21 @@ def create_interface():
                 )
 
                 with gr.Row():
-                    download_txt = gr.File(label="Download report (.txt)")
-                    download_findings = gr.File(label="Download findings (.json) — chunked modes")
+                    download_txt = gr.File(label="Baixar laudo (.txt)")
+                    download_findings = gr.File(label="Baixar achados (.json) — modos chunked")
 
-                with gr.Accordion("CT window presets", open=False):
-                    gr.Markdown("**Click to apply preset (disables auto-window).**")
+                with gr.Accordion("Presets de janela (TC)", open=False):
+                    gr.Markdown("**Clique para aplicar um preset (desativa a janela automática).**")
                     with gr.Row():
-                        brain_btn = gr.Button("Brain (40/80)", size="sm")
+                        brain_btn = gr.Button("Cérebro (40/80)", size="sm")
                         subdural_btn = gr.Button("Subdural (75/215)", size="sm")
                         stroke_btn = gr.Button("Stroke (32/8)", size="sm")
                     with gr.Row():
-                        lung_btn = gr.Button("Lung (-600/1500)", size="sm")
+                        lung_btn = gr.Button("Pulmão (-600/1500)", size="sm")
                         mediastinum_btn = gr.Button("Mediastinum (50/350)", size="sm")
                         bone_btn = gr.Button("Bone (400/1800)", size="sm")
                     with gr.Row():
-                        abdomen_btn = gr.Button("Abdomen (40/400)", size="sm")
+                        abdomen_btn = gr.Button("Abdome (40/400)", size="sm")
                         liver_btn = gr.Button("Liver (60/150)", size="sm")
 
                 # Preset handlers
@@ -935,15 +935,15 @@ def create_interface():
 
         gr.Markdown("---")
         gr.Markdown(
-            "**Supported modalities:** CT, MR, CR, DX. "
-            "**Tip:** For very large studies, use *chunked*; it tends to handle more slices without VRAM blow-ups."
+            "**Modalidades suportadas:** CT, MR, CR, DX. "
+            "**Dica:** em estudos muito grandes, use *chunked*; costuma aguentar mais slices sem estourar a VRAM."
         )
 
     return demo
 
 
 def main():
-    print("Starting MedGemma 1.5 DICOM Report Generator — Enhanced...")
+    print("Iniciando o Gerador de Laudo DICOM (MedGemma 1.5) — Enhanced...")
     demo = create_interface()
     demo.launch(
         server_name="0.0.0.0",
