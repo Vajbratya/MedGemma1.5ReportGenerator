@@ -48,7 +48,13 @@ from model_handler import (
     PipelineMode,
     generate_report_pipeline,
 )
-from reporting import Language, ReportTemplate, build_debug_footer
+from reporting import (
+    Language,
+    ReportTemplate,
+    build_debug_footer,
+    sanitize_findings,
+    sanitize_phi_text,
+)
 from vram import (
     QuantizationMode,
     format_vram_summary,
@@ -436,6 +442,7 @@ def _generate_report_impl(
     top_k: int,
     do_sample: bool,
     append_debug: bool,
+    sanitize_phi: bool,
 ) -> Tuple[str, str, Optional[str], Optional[str]]:
     """
     Gera um rascunho de laudo radiológico.
@@ -450,7 +457,7 @@ def _generate_report_impl(
 
     try:
         if not file_path:
-            return "Please upload a DICOM ZIP file first.", "", None, None
+            return "Envie um ZIP DICOM antes de gerar o laudo.", "", None, None
 
         # Garante que o modelo esteja carregado.
         if MODEL_MANAGER.loaded_config is None:
@@ -524,11 +531,24 @@ def _generate_report_impl(
             do_sample=bool(do_sample),
         )
 
+        # Sanitiza entradas antes de enviar para o modelo (reduz risco de PHI indo pro prompt).
+        if sanitize_phi:
+            clinical_history, _ = sanitize_phi_text(clinical_history or "", language=language)
+            additional_instructions, _ = sanitize_phi_text(additional_instructions or "", language=language)
+            prompt_override, _ = sanitize_phi_text(prompt_override or "", language=language)
+
+            safe_study_info = dict(study_info or {})
+            for k in ("StudyDescription", "BodyPartExamined", "SeriesSummary"):
+                if k in safe_study_info and safe_study_info.get(k):
+                    safe_study_info[k], _ = sanitize_phi_text(str(safe_study_info.get(k)), language=language)
+        else:
+            safe_study_info = study_info
+
         result = generate_report_pipeline(
             manager=MODEL_MANAGER,
             images=images,
             modality=modality,
-            study_info=study_info,
+            study_info=safe_study_info,
             language=language,
             template=template,
             clinical_history=clinical_history or "",
@@ -540,10 +560,15 @@ def _generate_report_impl(
         )
 
         report = result.report_text
+        sanitizer_warnings: List[str] = []
+        if sanitize_phi:
+            report, sanitizer_warnings = sanitize_phi_text(report, language=language)
         if append_debug:
             report = report + "\n" + build_debug_footer(result.debug)
 
         merged_warnings: List[str] = []
+        if sanitizer_warnings:
+            merged_warnings.extend(sanitizer_warnings)
         if result.qc_issues:
             merged_warnings.extend(list(result.qc_issues))
 
@@ -559,6 +584,11 @@ def _generate_report_impl(
 
         if result.extracted_findings is not None:
             findings_to_save = result.extracted_findings
+            if sanitize_phi:
+                findings_to_save, fw = sanitize_findings(findings_to_save, language=language)
+                for w in fw:
+                    if w not in merged_warnings:
+                        merged_warnings.append(w)
             jf = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
             jf.write(json.dumps({"findings": findings_to_save}, ensure_ascii=False, indent=2).encode("utf-8"))
             jf.flush()
@@ -825,6 +855,12 @@ def create_interface():
                     value=False,
                 )
 
+                sanitize_phi_checkbox = gr.Checkbox(
+                    label="Sanitizador de PHI/PII (recomendado)",
+                    value=True,
+                    info="Redige possíveis identificadores em texto livre (prompt + saída). Heurístico.",
+                )
+
                 generate_btn = gr.Button("Gerar laudo", variant="primary", size="lg")
 
                 report_output = gr.Textbox(
@@ -929,6 +965,7 @@ def create_interface():
                 top_k_slider,
                 do_sample_checkbox,
                 append_debug,
+                sanitize_phi_checkbox,
             ],
             outputs=[report_output, qc_output, download_txt, download_findings],
         )

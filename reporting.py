@@ -813,3 +813,116 @@ def build_debug_footer(meta: Dict[str, Any]) -> str:
             ]
         )
     )
+
+
+_EMAIL_RE = re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b")
+_PHONE_RE = re.compile(
+    r"(?:(?<=\s)|^)(?:\+?\d{1,3}\s*)?(?:\(?\d{2,3}\)?\s*)?(?:\d[\s\-]*){7,}\d(?:(?=\s)|$)"
+)
+_UID_LIKE_RE = re.compile(r"\b\d+(?:\.\d+){2,}\b")
+_LONG_DIGITS_RE = re.compile(r"\b\d{7,}\b")
+
+_PHI_LABEL_RE = re.compile(
+    r"(?im)^\s*((?:"
+    r"patient\s*name|name|patient\s*id|patient\s*identifier|mrn|dob|ssn|accession(?:\s*number)?|"
+    r"nome|paciente|id\s*do\s*paciente|prontu[aá]rio|cpf|rg|cns|data\s*de\s*nascimento|"
+    r"nombre|paciente|id\s*del\s*paciente|historia\s*cl[ií]nica|dni"
+    r"))\s*[:\-]\s*(.+?)\s*$"
+)
+
+
+def sanitize_phi_text(text: str, *, language: Language = "Português (Brasil)") -> Tuple[str, List[str]]:
+    """
+    Sanitiza possíveis identificadores (PHI/PII) em texto livre.
+
+    É propositalmente heurístico: a ideia é reduzir risco de vazar dados, não “entender” contexto.
+    Retorna (texto_sanitizado, avisos).
+    """
+    if not text:
+        return text, []
+
+    warnings: List[str] = []
+    s = str(text)
+
+    # Redação por linha quando houver rótulos explícitos.
+    def _redact_label_line(m: re.Match) -> str:
+        # Não usar m.group(0), porque pode conter o valor quando o separador é "-".
+        label = str(m.group(1)).strip()
+        return f"{label}: [REDACTED]"
+
+    before = s
+    s = _PHI_LABEL_RE.sub(_redact_label_line, s)
+    if s != before:
+        if language == "Español":
+            warnings.append("Sanitización: redacté líneas que parecen contener datos del paciente (p. ej., nombre/ID).")
+        elif language == "English":
+            warnings.append("Sanitizer: redacted likely patient-identifying fields (e.g., name/ID).")
+        else:
+            warnings.append("Sanitização: removi valores em linhas que parecem conter dados do paciente (ex.: nome/ID).")
+
+    # Email
+    if _EMAIL_RE.search(s):
+        s = _EMAIL_RE.sub("[REDACTED_EMAIL]", s)
+        if language == "Español":
+            warnings.append("Sanitización: redacté un posible e-mail.")
+        elif language == "English":
+            warnings.append("Sanitizer: redacted a possible email.")
+        else:
+            warnings.append("Sanitização: removi possível e-mail.")
+
+    # Telefone (bem aproximado)
+    if _PHONE_RE.search(s):
+        s = _PHONE_RE.sub("[REDACTED_PHONE]", s)
+        if language == "Español":
+            warnings.append("Sanitización: redacté un posible teléfono.")
+        elif language == "English":
+            warnings.append("Sanitizer: redacted a possible phone number.")
+        else:
+            warnings.append("Sanitização: removi possível telefone.")
+
+    # UIDs/IDs longos (prontuário, accession, etc.)
+    if _UID_LIKE_RE.search(s):
+        s = _UID_LIKE_RE.sub("[REDACTED_UID]", s)
+        if language == "Español":
+            warnings.append("Sanitización: redacté un posible UID/identificador técnico.")
+        elif language == "English":
+            warnings.append("Sanitizer: redacted a UID-like identifier.")
+        else:
+            warnings.append("Sanitização: removi possível UID/identificador técnico.")
+
+    if _LONG_DIGITS_RE.search(s):
+        s = _LONG_DIGITS_RE.sub("[REDACTED_ID]", s)
+        if language == "Español":
+            warnings.append("Sanitización: redacté un identificador numérico largo (posible ID).")
+        elif language == "English":
+            warnings.append("Sanitizer: redacted a long numeric identifier.")
+        else:
+            warnings.append("Sanitização: removi sequência numérica longa (possível ID).")
+
+    warnings = list(dict.fromkeys(warnings))
+    return _clean_text(s), warnings
+
+
+def sanitize_findings(
+    findings: List[Dict[str, Any]],
+    *,
+    language: Language = "Português (Brasil)",
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Sanitiza campos textuais de uma lista de achados (para evitar PHI no .json)."""
+    out: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    for f in findings:
+        if not isinstance(f, dict):
+            continue
+        anatomy = f.get("anatomy", "")
+        finding = f.get("finding", "")
+        anatomy_s, w1 = sanitize_phi_text(str(anatomy), language=language)
+        finding_s, w2 = sanitize_phi_text(str(finding), language=language)
+        warnings.extend(w1)
+        warnings.extend(w2)
+        nf = dict(f)
+        nf["anatomy"] = anatomy_s
+        nf["finding"] = finding_s
+        out.append(nf)
+    warnings = list(dict.fromkeys(warnings))
+    return out, warnings
