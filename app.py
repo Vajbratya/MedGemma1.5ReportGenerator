@@ -1,7 +1,10 @@
 """
-Main Gradio application for MedGemma DICOM report drafting.
+Aplicação Gradio para rascunho de laudos a partir de estudos DICOM (MedGemma 1.5).
+
+Aviso: somente para pesquisa/educação. Não usar para decisão clínica.
 """
-# IMPORTANT: Import spaces FIRST before any CUDA-related packages (torch, transformers)
+
+# IMPORTANTE: no Hugging Face Spaces, importe `spaces` ANTES de torch/transformers.
 try:
     import spaces
     SPACES_AVAILABLE = True
@@ -16,10 +19,12 @@ from typing import Tuple, List
 import gradio as gr
 import torch
 
-# Disable TF32 to avoid CUBLAS_STATUS_INVALID_VALUE errors with certain tensor shapes
-# This forces cuBLAS to use more compatible computation paths
-torch.backends.cuda.matmul.allow_tf32 = False
-torch.backends.cudnn.allow_tf32 = False
+# Desativa TF32 para evitar erros do tipo CUBLAS_STATUS_INVALID_VALUE em alguns formatos/GPUs.
+try:
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+except Exception:
+    pass
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForImageTextToText
 
@@ -27,25 +32,40 @@ from dicom_processor import process_dicom_study
 from phi_sanitizer import mask_patient_id, sanitize_phi_text
 
 # ============================================================================
-# Model Loading - MUST be at module level for ZeroGPU compatibility
+# Carregamento do modelo (precisa estar no nível do módulo para ZeroGPU/Spaces)
 # ============================================================================
-print("Loading MedGemma model at startup...")
+
+def _select_model_dtype() -> torch.dtype:
+    if not torch.cuda.is_available():
+        return torch.float32
+    fn = getattr(torch.cuda, "is_bf16_supported", None)
+    if callable(fn):
+        try:
+            if fn():
+                return torch.bfloat16
+        except Exception:
+            pass
+    return torch.float16
+
+
+print("Carregando o modelo MedGemma na inicialização...")
 MODEL_ID = os.getenv("MODEL_ID", "google/medgemma-1.5-4b-it")
 HF_TOKEN = os.getenv("HF_TOKEN")
+MODEL_DTYPE = _select_model_dtype()
 
 processor = AutoProcessor.from_pretrained(MODEL_ID, token=HF_TOKEN)
 model = AutoModelForImageTextToText.from_pretrained(
     MODEL_ID,
     device_map="auto",
-    torch_dtype=torch.bfloat16,
+    torch_dtype=MODEL_DTYPE,
     token=HF_TOKEN,
 )
 model.generation_config.do_sample = True
-print(f"Model loaded: {MODEL_ID}")
-print(f"Model device: {model.device}")
-print(f"Model dtype: {next(model.parameters()).dtype}")
+print(f"Modelo carregado: {MODEL_ID}")
+print(f"Device do modelo: {model.device}")
+print(f"DType do modelo: {next(model.parameters()).dtype}")
 
-# Store processed data for reuse
+# Cache de dados processados (evita reprocessar em todo clique)
 cached_data = {
     "zip_bytes": None,
     "images": None,
@@ -62,12 +82,12 @@ def process_dicom_file(
     window_width: float,
     use_auto_window: bool
 ) -> Tuple[str, str, List[Image.Image]]:
-    """Process uploaded DICOM ZIP file and return preview images."""
+    """Processa o ZIP DICOM e devolve imagens de pré-visualização."""
     global cached_data
 
     try:
         if file_path is None:
-            return "No file uploaded", "", []
+            return "Nenhum arquivo enviado.", "", []
 
         with open(file_path, 'rb') as f:
             zip_bytes = f.read()
@@ -94,12 +114,20 @@ def process_dicom_file(
         cached_data["study_info"] = study_info
 
         max_per_series = study_info.get('MaxSlicesPerSeries', None)
-        sampling_info = f"Max Slices Per Series: {max_per_series}" if max_per_series else "Sampling: Global (all series combined)"
+        sampling_info = (
+            f"Máx. de slices por série: {max_per_series}"
+            if max_per_series
+            else "Amostragem: global (todas as séries juntas)"
+        )
 
         # Get window info
         default_wc = study_info.get('DefaultWindowCenter', 'N/A')
         default_ww = study_info.get('DefaultWindowWidth', 'N/A')
-        window_info = f"Window: Auto (WC={default_wc}, WW={default_ww})" if use_auto_window else f"Window: Manual (WC={window_center}, WW={window_width})"
+        window_info = (
+            f"Janela: automática (WC={default_wc}, WW={default_ww})"
+            if use_auto_window
+            else f"Janela: manual (WC={window_center}, WW={window_width})"
+        )
 
         # Estimate VRAM usage based on actual image size
         num_images = study_info.get('ProcessedImages', 0)
@@ -113,32 +141,32 @@ def process_dicom_file(
 
         patient_id_masked = mask_patient_id(str(study_info.get("PatientID", "")))
 
-        info_text = f"""Study Information (PHI-safe display):
+        info_text = f"""Informações do estudo (exibição segura / PHI-safe):
 
-Modality: {study_info['Modality']}
-Study Description: {study_info['StudyDescription']}
-Study Date: {study_info['StudyDate']}
-Patient ID: {patient_id_masked}
+Modalidade: {study_info['Modality']}
+Descrição do estudo: {study_info['StudyDescription']}
+Data do estudo: {study_info['StudyDate']}
+ID do paciente: {patient_id_masked}
 
-Series Count: {study_info.get('SeriesCount', 'N/A')}
-Total Original Slices: {study_info.get('TotalOriginalSlices', 'N/A')}
+Qtde. de séries: {study_info.get('SeriesCount', 'N/A')}
+Total de slices (originais): {study_info.get('TotalOriginalSlices', 'N/A')}
 {sampling_info}
-Processed Images: {num_images}
-Image Size: {img_size}x{img_size}
+Imagens processadas: {num_images}
+Tamanho da imagem: {img_size}x{img_size}
 {window_info}
 
---- VRAM Estimate ---
-Model: ~{model_vram_gb:.1f} GB
-Images ({num_images} x {img_size}x{img_size}): ~{images_vram_gb:.1f} GB
-Total Estimated: ~{total_vram_gb:.1f} GB
+--- Estimativa de VRAM ---
+Modelo: ~{model_vram_gb:.1f} GB
+Imagens ({num_images} x {img_size}x{img_size}): ~{images_vram_gb:.1f} GB
+Total estimado: ~{total_vram_gb:.1f} GB
 """
 
-        status = f"Processed {len(images)} images from {study_info['Modality']} study"
+        status = f"Processado: {len(images)} imagens ({study_info['Modality']})"
 
         return status, info_text, images
 
     except Exception as e:
-        error_msg = f"Error processing DICOM: {str(e)}"
+        error_msg = f"Erro ao processar DICOM: {str(e)}"
         print(error_msg)
         print(traceback.format_exc())
         return error_msg, "", []
@@ -159,12 +187,12 @@ def _generate_report_impl(
     do_sample: bool,
     sanitize_phi: bool,
 ) -> str:
-    """Generate radiology report using MedGemma."""
+    """Gera um rascunho de laudo com MedGemma."""
     global cached_data
 
     try:
         if file_path is None:
-            return "Please upload a DICOM ZIP file first."
+            return "Envie um ZIP DICOM antes de gerar o laudo."
 
         # Check if we can use cached images
         use_cache = (
@@ -191,16 +219,18 @@ def _generate_report_impl(
                 window_width=ww
             )
 
-        print(f"Processing {len(images)} images...")
+        print(f"Processando {len(images)} imagens...")
 
         # Use custom prompt or default
         if not prompt.strip():
-            prompt = f"You are a radiologist, please draft the full structured report for the following {modality} exam. Include the following sections: Technique, Findings, and Impression."
+            prompt = (
+                f"Você é um médico radiologista. Gere um laudo estruturado para o exame ({modality}) "
+                "com as seções: Técnica, Achados e Impressão."
+            )
         if sanitize_phi:
             prompt, _ = sanitize_phi_text(prompt)
 
-        # Save images to temp files and build message content using "url" format
-        # This matches the working medgemma space implementation
+        # Salva imagens em arquivos temporários e monta o conteúdo no formato esperado pelo model/processor.
         temp_files = []
         content = []
         for i, img in enumerate(images):
@@ -217,17 +247,21 @@ def _generate_report_impl(
             }
         ]
 
-        # Process inputs
         inputs = processor.apply_chat_template(
             messages,
             add_generation_prompt=True,
             tokenize=True,
             return_dict=True,
             return_tensors="pt"
-        ).to(device=model.device, dtype=torch.bfloat16)
+        )
+        inputs = inputs.to(device=model.device)
+        model_dtype = next(model.parameters()).dtype
+        for k, v in list(inputs.items()):
+            if torch.is_tensor(v) and v.is_floating_point():
+                inputs[k] = v.to(dtype=model_dtype)
 
         input_len = inputs["input_ids"].shape[-1]
-        print(f"Input sequence length: {input_len}")
+        print(f"Tamanho da sequência de entrada: {input_len}")
 
         # Generate report
         with torch.inference_mode():
@@ -266,9 +300,9 @@ def _generate_report_impl(
         return report
 
     except Exception as e:
-        error_msg = f"Error generating report: {str(e)}\n\n{traceback.format_exc()}"
+        error_msg = f"Erro ao gerar o laudo: {str(e)}\n\n{traceback.format_exc()}"
         print(error_msg)
-        # Clean up temp files on error
+        # Limpa temporários em caso de erro
         if 'temp_files' in locals():
             for temp_file in temp_files:
                 try:
@@ -278,7 +312,7 @@ def _generate_report_impl(
         return error_msg
 
 
-# Apply @spaces.GPU decorator if running on HuggingFace Spaces
+# Aplica @spaces.GPU quando estiver rodando no Hugging Face Spaces
 if SPACES_AVAILABLE:
     @spaces.GPU(duration=120)
     def generate_report(
@@ -296,7 +330,7 @@ if SPACES_AVAILABLE:
         do_sample: bool,
         sanitize_phi: bool,
     ) -> str:
-        """Generate radiology report using MedGemma (GPU-accelerated on HF Spaces)."""
+        """Gera laudo com MedGemma (acelerado por GPU no HF Spaces)."""
         return _generate_report_impl(
             file_path, max_slices_per_series, image_size,
             window_center, window_width, use_auto_window,
@@ -318,7 +352,7 @@ else:
         do_sample: bool,
         sanitize_phi: bool,
     ) -> str:
-        """Generate radiology report using MedGemma."""
+        """Gera laudo com MedGemma."""
         return _generate_report_impl(
             file_path, max_slices_per_series, image_size,
             window_center, window_width, use_auto_window,
@@ -327,29 +361,29 @@ else:
 
 
 def create_interface():
-    """Create the Gradio interface."""
+    """Cria a interface do Gradio."""
 
-    with gr.Blocks(title="MedGemma 1.5 DICOM Report Generator", theme=gr.themes.Soft()) as demo:
-        gr.Markdown("# MedGemma 1.5 DICOM Report Generator")
-        gr.Markdown("Upload a ZIP file containing DICOM images to generate a structured radiology report.")
+    with gr.Blocks(title="Gerador de Laudo DICOM (MedGemma 1.5)", theme=gr.themes.Soft()) as demo:
+        gr.Markdown("# Gerador de Laudo DICOM (MedGemma 1.5)")
+        gr.Markdown("Envie um arquivo ZIP com imagens DICOM para gerar um rascunho de laudo estruturado.")
 
         with gr.Row():
             # Left column: Upload and settings
             with gr.Column(scale=1):
                 file_input = gr.File(
-                    label="Upload DICOM ZIP",
+                    label="Enviar ZIP DICOM",
                     file_types=[".zip"],
                     type="filepath"
                 )
 
-                with gr.Accordion("Image Processing Settings", open=True):
+                with gr.Accordion("Processamento de imagens", open=True):
                     max_slices_slider = gr.Slider(
                         minimum=0,
                         maximum=50,
                         value=10,
                         step=1,
-                        label="Max Slices Per Series",
-                        info="0 = use all slices. Reduce to save VRAM."
+                        label="Máx. de slices por série",
+                        info="0 = usa todas as slices (global). Reduza para economizar VRAM."
                     )
 
                     image_size_slider = gr.Slider(
@@ -357,13 +391,13 @@ def create_interface():
                         maximum=1024,
                         value=512,
                         step=32,
-                        label="Image Size",
-                        info="Smaller = less VRAM, lower quality"
+                        label="Tamanho da imagem",
+                        info="Menor = menos VRAM, menos qualidade"
                     )
 
-                    gr.Markdown("**Windowing (for CT/X-ray)**")
+                    gr.Markdown("**Windowing (TC / raio-X)**")
                     use_auto_window = gr.Checkbox(
-                        label="Use Auto Window (from DICOM metadata)",
+                        label="Usar janela automática (metadados DICOM)",
                         value=True
                     )
                     with gr.Row():
@@ -373,7 +407,7 @@ def create_interface():
                             value=40,
                             step=10,
                             label="Window Center (WC)",
-                            info="e.g., Brain=40, Lung=-600, Bone=400"
+                            info="Ex.: cérebro=40, pulmão=-600, osso=400"
                         )
                         window_width_slider = gr.Slider(
                             minimum=1,
@@ -381,10 +415,10 @@ def create_interface():
                             value=400,
                             step=10,
                             label="Window Width (WW)",
-                            info="e.g., Brain=80, Lung=1500, Bone=1800"
+                            info="Ex.: cérebro=80, pulmão=1500, osso=1800"
                         )
 
-                process_btn = gr.Button("Process & Preview", variant="primary", size="lg")
+                process_btn = gr.Button("Processar & pré-visualizar", variant="primary", size="lg")
 
                 status_output = gr.Textbox(
                     label="Status",
@@ -392,18 +426,18 @@ def create_interface():
                 )
 
                 study_info_box = gr.Textbox(
-                    label="Study Information & VRAM Estimate",
+                    label="Informações do estudo & estimativa de VRAM",
                     interactive=False,
                     lines=14
                 )
 
             # Middle column: Image preview
             with gr.Column(scale=1):
-                gr.Markdown("### Image Preview")
-                gr.Markdown("*Preview of sampled slices that will be sent to the model*")
+                gr.Markdown("### Pré-visualização")
+                gr.Markdown("*Preview das slices amostradas que serão enviadas ao modelo*")
 
                 image_gallery = gr.Gallery(
-                    label="Sampled Slices",
+                    label="Slices amostradas",
                     show_label=False,
                     columns=4,
                     rows=3,
@@ -417,30 +451,30 @@ def create_interface():
                 prompt_input = gr.Textbox(
                     label="Prompt",
                     lines=3,
-                    value="You are a radiologist, please draft the full structured report for this exam. Include: Technique, Findings, and Impression.",
-                    info="Customize the prompt. Leave empty for default."
+                    value="Você é um médico radiologista. Gere um laudo estruturado com: Técnica, Achados e Impressão.",
+                    info="Personalize o prompt. Deixe em branco para usar o padrão."
                 )
                 sanitize_phi_checkbox = gr.Checkbox(
-                    label="PHI/PII sanitizer (recommended)",
+                    label="Sanitizador de PHI/PII (recomendado)",
                     value=True,
-                    info="Redacts likely identifiers in free text (prompt + output). Heuristic only.",
+                    info="Redige possíveis identificadores em texto livre (prompt + saída). Heurístico.",
                 )
 
-                with gr.Accordion("Model Settings", open=False):
+                with gr.Accordion("Configurações do modelo", open=False):
                     with gr.Row():
                         max_tokens_slider = gr.Slider(
                             minimum=50,
                             maximum=1000,
                             value=350,
                             step=10,
-                            label="Max Tokens"
+                            label="Máx. tokens"
                         )
                         temperature_slider = gr.Slider(
                             minimum=0.0,
                             maximum=2.0,
                             value=0.7,
                             step=0.1,
-                            label="Temperature"
+                            label="Temperatura"
                         )
                     with gr.Row():
                         top_p_slider = gr.Slider(
@@ -448,41 +482,41 @@ def create_interface():
                             maximum=1.0,
                             value=0.9,
                             step=0.05,
-                            label="Top P"
+                            label="Top-p"
                         )
                         top_k_slider = gr.Slider(
                             minimum=1,
                             maximum=100,
                             value=50,
                             step=1,
-                            label="Top K"
+                            label="Top-k"
                         )
                     do_sample_checkbox = gr.Checkbox(
-                        label="Enable Sampling",
+                        label="Ativar sampling",
                         value=True,
-                        info="Uncheck for deterministic output"
+                        info="Desmarque para saída determinística"
                     )
 
-                generate_btn = gr.Button("Generate Report", variant="primary", size="lg")
+                generate_btn = gr.Button("Gerar laudo", variant="primary", size="lg")
 
                 report_output = gr.Textbox(
-                    label="Generated Report",
+                    label="Laudo gerado",
                     interactive=False,
                     lines=18,
-                    placeholder="Report will appear here..."
+                    placeholder="O laudo vai aparecer aqui..."
                 )
 
-        # Common window presets
-        with gr.Accordion("Window Presets (click to apply)", open=False):
-            gr.Markdown("**CT Presets:**")
+        # Presets de janela
+        with gr.Accordion("Presets de janela (clique para aplicar)", open=False):
+            gr.Markdown("**Presets de TC:**")
             with gr.Row():
-                brain_btn = gr.Button("Brain (40/80)", size="sm")
+                brain_btn = gr.Button("Cérebro (40/80)", size="sm")
                 subdural_btn = gr.Button("Subdural (75/215)", size="sm")
                 stroke_btn = gr.Button("Stroke (32/8)", size="sm")
-                lung_btn = gr.Button("Lung (-600/1500)", size="sm")
+                lung_btn = gr.Button("Pulmão (-600/1500)", size="sm")
                 mediastinum_btn = gr.Button("Mediastinum (50/350)", size="sm")
                 bone_btn = gr.Button("Bone (400/1800)", size="sm")
-                abdomen_btn = gr.Button("Abdomen (40/400)", size="sm")
+                abdomen_btn = gr.Button("Abdome (40/400)", size="sm")
                 liver_btn = gr.Button("Liver (60/150)", size="sm")
 
         # Event handlers for presets
@@ -530,14 +564,17 @@ def create_interface():
         )
 
         gr.Markdown("---")
-        gr.Markdown("**Supported Modalities:** CT, MR, CR, DX | **Tip:** Use fewer slices and smaller image size to reduce VRAM usage")
+        gr.Markdown(
+            "**Modalidades suportadas:** CT, MR, CR, DX | "
+            "**Dica:** use menos slices e um tamanho de imagem menor para reduzir o consumo de VRAM"
+        )
 
     return demo
 
 
 def main():
-    """Main entry point."""
-    print("Starting MedGemma 1.5 DICOM Report Generator...")
+    """Ponto de entrada."""
+    print("Iniciando o Gerador de Laudo DICOM (MedGemma 1.5)...")
 
     demo = create_interface()
     demo.launch(
