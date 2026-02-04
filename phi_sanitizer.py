@@ -1,8 +1,8 @@
 """
-Small, heuristic PHI/PII sanitizer.
+Sanitizador heurístico de PHI/PII.
 
-Goal: reduce accidental leakage of identifiers (names, IDs, contacts) in free text.
-This is NOT a medical/legal guarantee; it's a best-effort safety layer.
+Objetivo: reduzir vazamento acidental de identificadores (nome, ID, contatos) em texto livre.
+Isto NÃO é garantia médica/jurídica; é uma camada de segurança “best-effort”.
 """
 
 from __future__ import annotations
@@ -19,16 +19,16 @@ _UID_LIKE_RE = re.compile(r"\b\d+(?:\.\d+){2,}\b")
 _LONG_DIGITS_RE = re.compile(r"\b\d{7,}\b")
 
 _PHI_LABEL_RE = re.compile(
-    r"(?im)^\s*(?:"
+    r"(?im)^\s*((?:"
     r"patient\s*name|name|patient\s*id|patient\s*identifier|mrn|dob|ssn|accession(?:\s*number)?|"
     r"nome|paciente|id\s*do\s*paciente|prontu[aá]rio|cpf|rg|cns|data\s*de\s*nascimento|"
     r"nombre|paciente|id\s*del\s*paciente|historia\s*cl[ií]nica|dni"
-    r")\s*[:\-]\s*(.+?)\s*$"
+    r"))\s*[:\-]\s*(.+?)\s*$"
 )
 
 
 def mask_patient_id(patient_id: str) -> str:
-    """Mask an ID for UI display (keeps last 4 chars when possible)."""
+    """Mascara um ID para exibição no UI (mantém os últimos 4 caracteres quando possível)."""
     if not patient_id:
         return "REDACTED"
     s = str(patient_id).strip()
@@ -39,8 +39,8 @@ def mask_patient_id(patient_id: str) -> str:
 
 def sanitize_phi_text(text: str) -> Tuple[str, List[str]]:
     """
-    Best-effort PHI/PII sanitizer for free text.
-    Returns (sanitized_text, warnings).
+    Sanitizador “best-effort” de PHI/PII para texto livre.
+    Retorna (texto_sanitizado, avisos).
     """
     if not text:
         return text, []
@@ -49,30 +49,30 @@ def sanitize_phi_text(text: str) -> Tuple[str, List[str]]:
     s = str(text)
 
     def _redact_label_line(m: re.Match) -> str:
-        prefix = m.group(0).split(":", 1)[0]
-        return f"{prefix}: [REDACTED]"
+        # IMPORTANTE: não reutilizar m.group(0), porque pode conter o valor (ex.: quando o separador é "-").
+        label = str(m.group(1)).strip()
+        return f"{label}: [REDACTED]"
 
     before = s
     s = _PHI_LABEL_RE.sub(_redact_label_line, s)
     if s != before:
-        warnings.append("Sanitizer: redacted likely patient-identifying fields (name/ID).")
+        warnings.append("Sanitização: removi valores em linhas que parecem conter dados do paciente (ex.: nome/ID).")
 
     if _EMAIL_RE.search(s):
         s = _EMAIL_RE.sub("[REDACTED_EMAIL]", s)
-        warnings.append("Sanitizer: redacted a possible email.")
+        warnings.append("Sanitização: removi possível e-mail.")
 
     if _PHONE_RE.search(s):
         s = _PHONE_RE.sub("[REDACTED_PHONE]", s)
-        warnings.append("Sanitizer: redacted a possible phone number.")
+        warnings.append("Sanitização: removi possível telefone.")
 
     if _UID_LIKE_RE.search(s):
         s = _UID_LIKE_RE.sub("[REDACTED_UID]", s)
-        warnings.append("Sanitizer: redacted a UID-like identifier.")
+        warnings.append("Sanitização: removi possível UID/identificador técnico.")
 
     if _LONG_DIGITS_RE.search(s):
         s = _LONG_DIGITS_RE.sub("[REDACTED_ID]", s)
-        warnings.append("Sanitizer: redacted a long numeric identifier.")
+        warnings.append("Sanitização: removi sequência numérica longa (possível ID).")
 
     warnings = list(dict.fromkeys(warnings))
     return s.strip(), warnings
-
