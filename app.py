@@ -360,7 +360,7 @@ def process_dicom_file(
         return status, info_text, images, gr.update(choices=choices, value=default_selected)
 
     except Exception as e:
-        error_msg = f"Error processing DICOM: {e}"
+        error_msg = f"Erro ao processar o DICOM: {e}"
         print(error_msg)
         print(traceback.format_exc())
         return error_msg, "", [], gr.update(choices=[], value=[])
@@ -599,7 +599,7 @@ def _generate_report_impl(
 
         qc_lines: List[str] = []
         if merged_warnings:
-            qc_lines.append("QC / Warnings:")
+            qc_lines.append("QC / Avisos:")
             qc_lines.extend([f"- {x}" for x in merged_warnings])
 
         qc_lines.append("")
@@ -614,7 +614,7 @@ def _generate_report_impl(
         return report, qc_text, txt_path, json_path
 
     except Exception as e:
-        error_msg = f"Error generating report: {e}\n\n{traceback.format_exc()}"
+        error_msg = f"Erro ao gerar o laudo: {e}\n\n{traceback.format_exc()}"
         print(error_msg)
         return error_msg, error_msg, None, None
     finally:
