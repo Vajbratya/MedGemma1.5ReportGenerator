@@ -24,6 +24,7 @@ from PIL import Image
 from transformers import AutoProcessor, AutoModelForImageTextToText
 
 from dicom_processor import process_dicom_study
+from phi_sanitizer import mask_patient_id, sanitize_phi_text
 
 # ============================================================================
 # Model Loading - MUST be at module level for ZeroGPU compatibility
@@ -110,12 +111,14 @@ def process_dicom_file(
         images_vram_gb = (num_images * per_image_vram_mb) / 1024
         total_vram_gb = model_vram_gb + images_vram_gb
 
-        info_text = f"""Study Information:
+        patient_id_masked = mask_patient_id(str(study_info.get("PatientID", "")))
+
+        info_text = f"""Study Information (PHI-safe display):
 
 Modality: {study_info['Modality']}
 Study Description: {study_info['StudyDescription']}
 Study Date: {study_info['StudyDate']}
-Patient ID: {study_info['PatientID']}
+Patient ID: {patient_id_masked}
 
 Series Count: {study_info.get('SeriesCount', 'N/A')}
 Total Original Slices: {study_info.get('TotalOriginalSlices', 'N/A')}
@@ -154,6 +157,7 @@ def _generate_report_impl(
     top_p: float,
     top_k: int,
     do_sample: bool,
+    sanitize_phi: bool,
 ) -> str:
     """Generate radiology report using MedGemma."""
     global cached_data
@@ -192,6 +196,8 @@ def _generate_report_impl(
         # Use custom prompt or default
         if not prompt.strip():
             prompt = f"You are a radiologist, please draft the full structured report for the following {modality} exam. Include the following sections: Technique, Findings, and Impression."
+        if sanitize_phi:
+            prompt, _ = sanitize_phi_text(prompt)
 
         # Save images to temp files and build message content using "url" format
         # This matches the working medgemma space implementation
@@ -243,6 +249,8 @@ def _generate_report_impl(
             generation = generation[0][input_len:]
 
         report = processor.decode(generation, skip_special_tokens=True)
+        if sanitize_phi:
+            report, _ = sanitize_phi_text(report)
 
         # Clear GPU cache
         if torch.cuda.is_available():
@@ -286,12 +294,13 @@ if SPACES_AVAILABLE:
         top_p: float,
         top_k: int,
         do_sample: bool,
+        sanitize_phi: bool,
     ) -> str:
         """Generate radiology report using MedGemma (GPU-accelerated on HF Spaces)."""
         return _generate_report_impl(
             file_path, max_slices_per_series, image_size,
             window_center, window_width, use_auto_window,
-            prompt, max_tokens, temperature, top_p, top_k, do_sample
+            prompt, max_tokens, temperature, top_p, top_k, do_sample, sanitize_phi
         )
 else:
     def generate_report(
@@ -307,12 +316,13 @@ else:
         top_p: float,
         top_k: int,
         do_sample: bool,
+        sanitize_phi: bool,
     ) -> str:
         """Generate radiology report using MedGemma."""
         return _generate_report_impl(
             file_path, max_slices_per_series, image_size,
             window_center, window_width, use_auto_window,
-            prompt, max_tokens, temperature, top_p, top_k, do_sample
+            prompt, max_tokens, temperature, top_p, top_k, do_sample, sanitize_phi
         )
 
 
@@ -409,6 +419,11 @@ def create_interface():
                     lines=3,
                     value="You are a radiologist, please draft the full structured report for this exam. Include: Technique, Findings, and Impression.",
                     info="Customize the prompt. Leave empty for default."
+                )
+                sanitize_phi_checkbox = gr.Checkbox(
+                    label="PHI/PII sanitizer (recommended)",
+                    value=True,
+                    info="Redacts likely identifiers in free text (prompt + output). Heuristic only.",
                 )
 
                 with gr.Accordion("Model Settings", open=False):
@@ -508,7 +523,8 @@ def create_interface():
                 temperature_slider,
                 top_p_slider,
                 top_k_slider,
-                do_sample_checkbox
+                do_sample_checkbox,
+                sanitize_phi_checkbox,
             ],
             outputs=[report_output]
         )
